@@ -1,0 +1,22 @@
+# Local environment files and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Isolated task worktrees
+/.worktrees/
+
+# Dependencies and build outputs
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Test artifacts and logs
+coverage/
+test-results/
+playwright-report/
+*.log
