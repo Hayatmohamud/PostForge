@@ -1,0 +1,40 @@
+:root {
+  color-scheme: light;
+  background: #f8fafc;
+  color: #172033;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+main {
+  width: min(100% - 3rem, 48rem);
+  margin: 0 auto;
+  padding: clamp(4rem, 12vw, 8rem) 0;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2.5rem, 8vw, 4rem);
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.eyebrow {
+  margin-bottom: 1rem;
+  color: #4338ca;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
