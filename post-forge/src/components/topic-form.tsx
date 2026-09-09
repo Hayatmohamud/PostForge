@@ -103,7 +103,7 @@ export function TopicForm({ onSubmit }: TopicFormProps) {
         </ul>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .topic-form { width: min(100%, 54rem); margin: 0 auto; }
         .topic-form-heading { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(14rem, 0.85fr); align-items: end; gap: 2rem; margin-bottom: 2.25rem; }
         .topic-form-heading h1 { max-width: 12ch; }
