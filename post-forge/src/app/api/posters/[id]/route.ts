@@ -1,5 +1,6 @@
 import { AppError, toPublicError } from "../../../../lib/errors";
-import { getPoster } from "../../../../lib/poster-storage";
+import { getPosterStream } from "../../../../lib/poster-storage";
+import { Readable } from "node:stream";
 
 const objectIdPattern = /^[a-f0-9]{24}$/i;
 
@@ -30,7 +31,7 @@ export async function GET(
   if (!objectIdPattern.test(id)) return errorResponse(new AppError("INVALID_INPUT"));
 
   try {
-    const poster = await getPoster(id);
+    const poster = await getPosterStream(id);
     if (!poster) {
       return Response.json({ error: "Poster not found" }, {
         status: 404,
@@ -38,13 +39,7 @@ export async function GET(
       });
     }
 
-    // Response's DOM typings accept an ArrayBuffer while MongoDB's Buffer is
-    // an ArrayBufferView. Slice to the exact validated payload range first.
-    const body = poster.bytes.buffer.slice(
-      poster.bytes.byteOffset,
-      poster.bytes.byteOffset + poster.bytes.byteLength,
-    ) as ArrayBuffer;
-    return new Response(body, {
+    return new Response(Readable.toWeb(poster.stream) as unknown as ReadableStream<Uint8Array>, {
       status: 200,
       headers: {
         ...safeHeaders,

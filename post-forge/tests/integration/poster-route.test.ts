@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { Readable } from "node:stream";
 
-const { getPoster } = vi.hoisted(() => ({ getPoster: vi.fn() }));
+const { getPosterStream } = vi.hoisted(() => ({ getPosterStream: vi.fn() }));
 
-vi.mock("server-only", () => ({}), { virtual: true });
-vi.mock("../../src/lib/poster-storage", () => ({ getPoster }));
+vi.mock("server-only", () => ({}));
+vi.mock("../../src/lib/poster-storage", () => ({ getPosterStream }));
 
 import { GET } from "../../src/app/api/posters/[id]/route";
 
@@ -15,17 +16,17 @@ function request() {
 }
 
 describe("GET /api/posters/[id]", () => {
-  beforeEach(() => getPoster.mockReset());
+  beforeEach(() => getPosterStream.mockReset());
 
   test("serves the complete poster with its declared media type and safe headers", async () => {
-    getPoster.mockResolvedValue({
+    getPosterStream.mockResolvedValue({
       id,
       postId: "507f1f77bcf86cd799439012",
       stage: "illustrate",
       mediaType: "image/png",
       byteSize: bytes.byteLength,
       completedAt: new Date().toISOString(),
-      bytes,
+      stream: Readable.from([bytes]),
     });
 
     const response = await GET(request(), { params: Promise.resolve({ id }) });
@@ -44,16 +45,37 @@ describe("GET /api/posters/[id]", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ code: "INVALID_INPUT", status: 400 });
-    expect(getPoster).not.toHaveBeenCalled();
+    expect(getPosterStream).not.toHaveBeenCalled();
   });
 
   test("returns 404 for an absent or incomplete poster", async () => {
-    getPoster.mockResolvedValue(null);
+    getPosterStream.mockResolvedValue(null);
 
     const response = await GET(request(), { params: Promise.resolve({ id }) });
 
     expect(response.status).toBe(404);
     expect(await response.json()).toEqual({ error: "Poster not found" });
+  });
+
+  test("propagates a download stream failure through the response body", async () => {
+    const stream = Readable.from((async function* () {
+      yield bytes.subarray(0, 4);
+      throw new Error("private stream details");
+    })());
+    getPosterStream.mockResolvedValue({
+      id,
+      postId: "507f1f77bcf86cd799439012",
+      stage: "illustrate",
+      mediaType: "image/png",
+      byteSize: bytes.byteLength,
+      completedAt: new Date().toISOString(),
+      stream,
+    });
+
+    const response = await GET(request(), { params: Promise.resolve({ id }) });
+
+    expect(response.status).toBe(200);
+    await expect(response.arrayBuffer()).rejects.toThrow();
   });
 
 });

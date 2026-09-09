@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   GridFSBucket, MongoNetworkError, MongoOperationTimeoutError, MongoServerSelectionError, ObjectId, ReadPreference,
@@ -16,6 +16,7 @@ export type PosterRecord = Readonly<{
   id: string; postId: string; stage: "illustrate"; mediaType: PosterMediaType;
   byteSize: number; completedAt: string;
 }>;
+export type PosterDownload = Readonly<PosterRecord & { stream: Readable }>;
 export type SavePosterInput = Readonly<{
   postId: string; stage: "illustrate"; mediaType: PosterMediaType; bytes: Uint8Array;
 }>;
@@ -69,6 +70,41 @@ async function verifyFile(bucket: GridFSBucket, manifest: Manifest, maxBytes: nu
       file.metadata?.stage !== manifest.stage || file.metadata?.mediaType !== manifest.mediaType ||
       file.metadata?.sha256 !== manifest.sha256) throw new AppError("TERMINAL_FAILURE");
   return record;
+}
+
+function validatedStream(download: Readable, record: PosterRecord, sha256: string): Readable {
+  const hash = createHash("sha256");
+  const signature: Buffer[] = [];
+  let signatureBytes = 0;
+  let byteSize = 0;
+  const validated = download.pipe(new Transform({
+    transform(chunk: Buffer | Uint8Array, _encoding, callback) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      byteSize += bytes.length;
+      if (byteSize > record.byteSize) return callback(new AppError("TERMINAL_FAILURE"));
+      hash.update(bytes);
+      if (signatureBytes < 12) {
+        const prefix = bytes.subarray(0, Math.min(bytes.length, 12 - signatureBytes));
+        signature.push(prefix);
+        signatureBytes += prefix.length;
+      }
+      callback(null, bytes);
+    },
+    flush(callback) {
+      const bytes = Buffer.concat(signature, signatureBytes);
+      if (byteSize !== record.byteSize || hash.digest("hex") !== sha256 || !matchesMedia(bytes, record.mediaType)) {
+        callback(new AppError("TERMINAL_FAILURE"));
+      } else {
+        callback();
+      }
+    },
+  }));
+  // `pipe` does not forward source errors by itself. Bridge both directions
+  // so a failed or rejected download cannot become an unhandled process error
+  // and so consumers can observe the failure through the returned stream.
+  download.on("error", (error) => validated.destroy(error));
+  validated.on("error", () => download.destroy());
+  return validated;
 }
 
 async function cleanupAttempt(bucket: GridFSBucket, id: ObjectId, timeoutMS: number): Promise<void> {
@@ -161,29 +197,46 @@ async function publishCompleted(
 /** Only canonical completed manifests are readable; partial/orphan IDs return null. */
 export async function getPoster(id: string, env?: Environment): Promise<(PosterRecord & { bytes: Buffer }) | null> {
   if (typeof id !== "string" || !/^[a-f0-9]{24}$/i.test(id)) throw new AppError("INVALID_INPUT");
+  try {
+    const download = await getPosterStream(id, env);
+    if (!download) return null;
+    const chunks: Buffer[] = [];
+    let byteSize = 0;
+    try {
+      for await (const chunk of download.stream) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        byteSize += bytes.length;
+        chunks.push(bytes);
+      }
+    } finally {
+      download.stream.destroy();
+    }
+    const bytes = Buffer.concat(chunks, byteSize);
+    return {
+      id: download.id,
+      postId: download.postId,
+      stage: download.stage,
+      mediaType: download.mediaType,
+      byteSize: download.byteSize,
+      completedAt: download.completedAt,
+      bytes,
+    };
+  } catch (error) {
+    throw safeError(error);
+  }
+}
+
+/** Return a validated GridFS stream without buffering the complete poster. */
+export async function getPosterStream(id: string, env?: Environment): Promise<PosterDownload | null> {
+  if (typeof id !== "string" || !/^[a-f0-9]{24}$/i.test(id)) throw new AppError("INVALID_INPUT");
   const config = getServerConfig(env);
   try {
     const { bucket, manifests } = storage(await getMongoDatabase(env), config.limits.databaseTimeoutMs);
     const manifest = await manifests.findOne({ posterId: new ObjectId(id), status: "complete" });
     if (!manifest) return null;
     const record = await verifyFile(bucket, manifest, config.limits.posterMaxBytes);
-    const chunks: Buffer[] = [];
-    let byteSize = 0;
     const download = bucket.openDownloadStream(manifest.posterId, { timeoutMS: config.limits.databaseTimeoutMs });
-    try {
-      for await (const chunk of download) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        byteSize += bytes.length;
-        if (byteSize > record.byteSize || byteSize > config.limits.posterMaxBytes) throw new AppError("TERMINAL_FAILURE");
-        chunks.push(bytes);
-      }
-    } finally {
-      download.destroy();
-    }
-    const bytes = Buffer.concat(chunks, byteSize);
-    if (byteSize !== record.byteSize || createHash("sha256").update(bytes).digest("hex") !== manifest.sha256 ||
-        !matchesMedia(bytes, record.mediaType)) throw new AppError("TERMINAL_FAILURE");
-    return { ...record, bytes };
+    return Object.freeze({ ...record, stream: validatedStream(download, record, manifest.sha256) });
   } catch (error) {
     throw safeError(error);
   }
