@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 
 type AppShellProps = { children: ReactNode };
 
 export function AppShell({ children }: AppShellProps) {
+  const pathname = usePathname();
+
   return (
     <div className="app-shell">
       <a
@@ -28,8 +31,8 @@ export function AppShell({ children }: AppShellProps) {
             <span>PostForge</span>
           </Link>
           <nav className="primary-nav" aria-label="Primary navigation">
-            <Link className="nav-link" href="/">New Post</Link>
-            <Link className="nav-link" href="/library">Library</Link>
+            <Link className="nav-link" href="/" aria-current={pathname === "/" ? "page" : undefined}>New Post</Link>
+            <Link className="nav-link" href="/library" aria-current={pathname.startsWith("/library") ? "page" : undefined}>Library</Link>
           </nav>
         </div>
       </header>
