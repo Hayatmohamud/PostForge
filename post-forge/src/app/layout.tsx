@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { AppShell } from "../components/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PostForge",
-  description: "PostForge application starter.",
+  description: "Create, verify, and save well-sourced posts.",
 };
 
 export default function RootLayout({
@@ -12,7 +13,9 @@ export default function RootLayout({
 }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }
