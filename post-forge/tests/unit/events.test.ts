@@ -53,7 +53,9 @@ describe("Inngest client", () => {
     const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("http://127.0.0.1:8288/e/postforge-dev");
       expect(init?.headers).toMatchObject({ "Content-Type": "application/json" });
-      expect(JSON.parse(String(init?.body))).toEqual([createGenerationRequestedEvent({ postId, eventId })]);
+      const [payload] = JSON.parse(String(init?.body)) as Array<Record<string, unknown>>;
+      expect(payload).toMatchObject(createGenerationRequestedEvent({ postId, eventId }));
+      expect(payload.ts).toEqual(expect.any(Number));
       return new Response(JSON.stringify({ ids: [eventId], status: 200 }), { status: 200 });
     });
     const client = createInngestClient({ config, fetch: request });
