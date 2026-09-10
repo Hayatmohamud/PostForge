@@ -20,6 +20,7 @@ import { evidenceBundleSchema } from "../lib/contracts/evidence";
 import { posterSchema, type Poster } from "../lib/contracts/post";
 import { type PostSnapshot } from "../lib/posts";
 import type { SavedModelSelection } from "../lib/models";
+import type { CheckpointReason, CheckpointStore } from "./checkpoints";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -42,6 +43,7 @@ export type NetworkDependencies = Readonly<{
   getServerConfig?: typeof getServerConfig;
   serverConfig?: ServerConfig;
   imageConfig?: (state: NetworkState) => { provider: string; model: string; apiKey: string; timeoutMs?: number; maxBytes?: number };
+  checkpoint?: CheckpointStore;
   env?: Environment;
   now?: () => string;
 }>;
@@ -149,68 +151,109 @@ async function execute(request: NetworkRequest, dependencies: NetworkDependencie
   let state = request.state;
   let stage: "research" | "verify" | "write" | "edit" | "illustrate" | "publish" = "research";
   let published: PostSnapshot | undefined;
+  let checkpointRevision: number | undefined;
+
+  const persist = async (next: NetworkState, reason: CheckpointReason, activity: string): Promise<void> => {
+    if (!dependencies.checkpoint) return;
+    const saved = await dependencies.checkpoint.save({ state: next, expectedRevision: checkpointRevision, reason, activity });
+    if (!saved) throw new Error("Checkpoint write was stale.");
+    checkpointRevision = saved.revision;
+    state = saved.state;
+  };
+
+  const fail = async (
+    reason: string,
+    failureStage: "research" | "verify" | "write" | "edit" | "illustrate" | "publish",
+    code: "INSUFFICIENT_EVIDENCE" | "TERMINAL_FAILURE" = "TERMINAL_FAILURE",
+  ): Promise<NetworkResult> => {
+    const result = failureState(state, reason, failureStage, dependencies, code);
+    if (result.status === "failed" && dependencies.checkpoint) {
+      try { await persist(result.state, "failed", reason); } catch { /* retain the explicit failure result */ }
+    }
+    return result;
+  };
+
+  if (dependencies.checkpoint) {
+    const saved = await dependencies.checkpoint.load(state.postId, state.runId);
+    if (saved) {
+      checkpointRevision = saved.revision;
+      state = saved.state;
+    } else {
+      await persist(state, "start", "Network started");
+    }
+  }
 
   if (state.status === "done") return { status: "complete", state };
   if (state.status === "failed") return { status: "failed", state, reason: state.failure?.message ?? "Workflow has failed." };
-  if (!state.runId) return failureState(state, "Network requires the current run identity.", stage, dependencies);
+  if (!state.runId) return fail("Network requires the current run identity.", stage);
 
   try {
-    if (state.status === "queued") state = advance(state, "researching", dependencies);
+    if (state.status === "queued") {
+      state = advance(state, "researching", dependencies);
+      await persist(state, "stage_started", "Research started");
+    }
 
     if (state.status === "researching") {
       stage = "research";
       if (!state.evidence) {
         const researched: ResearchResult = await (dependencies.research ?? research)(state.topic, modelDependencies(state, dependencies));
         if (researched.status !== "complete" || !researched.findings.length) {
-          return failureState(state, "Research did not produce supported source-linked findings.", stage, dependencies, "INSUFFICIENT_EVIDENCE");
+          return fail("Research did not produce supported source-linked findings.", stage, "INSUFFICIENT_EVIDENCE");
         }
         const verified: VerifyResult = await (dependencies.verify ?? verify)({
           sources: [...researched.sources],
           findings: [...researched.findings],
         }, modelDependencies(state, dependencies));
         if (verified.status === "invalid_output") {
-          return failureState(state, "Verification returned invalid output.", "verify", dependencies);
+          return fail("Verification returned invalid output.", "verify");
         }
         state = networkStateSchema.parse({ ...state, evidence: evidenceBundleSchema.parse(verified.evidence) });
+        await persist(state, "output", "Verified evidence saved");
       }
       state = advance(state, "verifying", dependencies);
+      await persist(state, "stage_started", "Verification completed; writing gate evaluating");
     }
 
     if (state.status === "verifying") {
       stage = "verify";
-      if (!state.evidence) return failureState(state, "Verification requires an evidence bundle.", stage, dependencies);
+      if (!state.evidence) return fail("Verification requires an evidence bundle.", stage);
       const policy: VerificationPolicyResult = (dependencies.verificationPolicy ?? routeVerification)(state.evidence);
       if (policy.status !== "writer_ready") {
-        return failureState(state, "Verification found insufficient supported evidence.", stage, dependencies, "INSUFFICIENT_EVIDENCE");
+        return fail("Verification found insufficient supported evidence.", stage, "INSUFFICIENT_EVIDENCE");
       }
       state = advance(state, "writing", dependencies);
+      await persist(state, "stage_started", "Supported evidence reached Writer");
     }
 
     if (state.status === "writing") {
       stage = "write";
-      if (!state.evidence) return failureState(state, "Writing requires verified evidence.", stage, dependencies);
+      if (!state.evidence) return fail("Writing requires verified evidence.", stage);
       if (!state.article) {
         const policy = (dependencies.verificationPolicy ?? routeVerification)(state.evidence);
-        if (policy.status !== "writer_ready") return failureState(state, "Writing requires supported evidence.", stage, dependencies, "INSUFFICIENT_EVIDENCE");
+        if (policy.status !== "writer_ready") return fail("Writing requires supported evidence.", stage, "INSUFFICIENT_EVIDENCE");
         const written: WriterResult = await (dependencies.writer ?? writeArticle)({ topic: state.topic, evidence: policy.evidence }, modelDependencies(state, dependencies));
-        if (written.status !== "complete" || !written.article) return failureState(state, "Writer returned no valid article.", stage, dependencies);
+        if (written.status !== "complete" || !written.article) return fail("Writer returned no valid article.", stage);
         state = networkStateSchema.parse({ ...state, article: written.article });
+        await persist(state, "output", "Article draft saved");
       }
       state = advance(state, "editing", dependencies);
+      await persist(state, "stage_started", "Editing started");
     }
 
     if (state.status === "editing") {
       stage = "edit";
-      if (!state.evidence || !state.article) return failureState(state, "Editing requires article and evidence outputs.", stage, dependencies);
+      if (!state.evidence || !state.article) return fail("Editing requires article and evidence outputs.", stage);
       const edited: EditorResult = await (dependencies.editor ?? editArticle)({ article: state.article, evidence: state.evidence }, modelDependencies(state, dependencies));
-      if (edited.status !== "complete" || !edited.article) return failureState(state, "Editor returned no valid article.", stage, dependencies);
+      if (edited.status !== "complete" || !edited.article) return fail("Editor returned no valid article.", stage);
       state = networkStateSchema.parse({ ...state, article: edited.article });
+      await persist(state, "output", "Edited article saved");
       state = advance(state, "illustrating", dependencies);
+      await persist(state, "stage_started", "Illustration started");
     }
 
     if (state.status === "illustrating") {
       stage = "illustrate";
-      if (!state.article) return failureState(state, "Illustration requires an article output.", stage, dependencies);
+      if (!state.article) return fail("Illustration requires an article output.", stage);
       if (!state.image) {
         const illustrator = dependencies.illustrator ?? illustrate;
         const illustrated: IllustratorResult = await illustrator({
@@ -220,15 +263,17 @@ async function execute(request: NetworkRequest, dependencies: NetworkDependencie
           imageConfig: dependencies.imageConfig?.(state) ?? imageConfig(state, dependencies),
         });
         const image = posterFromIllustrator(illustrated, state.postId);
-        if (!image) return failureState(state, "Illustrator returned no valid poster.", stage, dependencies);
+        if (!image) return fail("Illustrator returned no valid poster.", stage);
         state = networkStateSchema.parse({ ...state, image });
+        await persist(state, "output", "Poster output saved");
       }
       state = advance(state, "publishing", dependencies);
+      await persist(state, "stage_started", "Publishing started");
     }
 
     if (state.status === "publishing") {
       stage = "publish";
-      if (!state.runId || !state.evidence || !state.article || !state.image) return failureState(state, "Publishing requires the current run and validated outputs.", stage, dependencies);
+      if (!state.runId || !state.evidence || !state.article || !state.image) return fail("Publishing requires the current run and validated outputs.", stage);
       const result: PublisherResult = await (dependencies.publisher ?? publishPost)({
         postId: state.postId,
         runId: state.runId,
@@ -237,15 +282,16 @@ async function execute(request: NetworkRequest, dependencies: NetworkDependencie
         evidence: state.evidence,
         poster: state.image,
       }, { env: dependencies.env });
-      if (result.status !== "published") return failureState(state, "Publisher did not confirm persistence.", stage, dependencies);
+      if (result.status !== "published") return fail("Publisher did not confirm persistence.", stage);
       published = result.post;
       state = finish(state, dependencies);
+      await persist(state, "completed", "Publication confirmed");
     }
 
-    if (!published) return failureState(state, "Network ended without confirmed publication.", stage, dependencies);
+    if (!published) return fail("Network ended without confirmed publication.", stage);
     return { status: "complete", state, post: published };
   } catch {
-    return failureState(state, "Network stage failed before a confirmed publication.", stage, dependencies);
+    return fail("Network stage failed before a confirmed publication.", stage);
   }
 }
 
