@@ -22,6 +22,9 @@ function toReactElement(value: unknown): ReactNode {
   const node = value as { __pw_type?: string; type?: unknown; props?: Record<string, unknown>; key?: string | number | null };
   if (node.__pw_type !== "jsx" || typeof node.type !== "function" && typeof node.type !== "string") return value as ReactNode;
   const props = Object.fromEntries(Object.entries(node.props ?? {}).map(([key, child]) => [key, toReactElement(child)]));
+  if (typeof node.type === "function") {
+    return toReactElement((node.type as (componentProps: Record<string, unknown>) => unknown)(props));
+  }
   return createElement(node.type as keyof React.JSX.IntrinsicElements, { ...props, key: node.key });
 }
 
