@@ -1,45 +1,42 @@
 import { expect, test } from "@playwright/test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { StageTimeline } from "../../src/components/stage-timeline";
+import type { StageName, StageState } from "../../src/lib/contracts/post";
 
-const stages = [
-  ["Research", "Queued", "○"],
-  ["Verify", "Active", "◐"],
-  ["Write", "Retrying", "↻"],
-  ["Edit", "Done", "✓"],
-  ["Illustrate", "Failed", "!"],
-  ["Publish", "Queued", "○"],
-] as const;
+const stageLabels = ["Research", "Verify", "Write", "Edit", "Illustrate", "Publish"] as const;
+const statusLabels = ["Queued", "Active", "Retrying", "Done", "Failed", "Queued"] as const;
+
+const states: Readonly<Record<StageName, StageState>> = {
+  research: { status: "queued", attempts: 0 },
+  verify: { status: "active", attempts: 1, startedAt: "2026-09-10T08:00:00.000Z", activity: "Checking supported claims" },
+  write: { status: "retrying", attempts: 2, startedAt: "2026-09-10T08:00:00.000Z", activity: "Correcting structured output" },
+  edit: { status: "done", attempts: 1, startedAt: "2026-09-10T08:00:00.000Z", endedAt: "2026-09-10T08:01:30.000Z" },
+  illustrate: { status: "failed", attempts: 1, startedAt: "2026-09-10T08:00:00.000Z", endedAt: "2026-09-10T08:02:00.000Z", activity: "Image provider unavailable" },
+  publish: { status: "queued", attempts: 0 },
+};
 
 function fixtureMarkup() {
-  return `
-    <main>
-      <section aria-labelledby="pipeline-heading">
-        <p>Live pipeline</p><h1 id="pipeline-heading">Generation progress</h1>
-        <ol aria-label="Post generation stages">
-          ${stages.map(([name, status, icon]) => `
-            <li class="stage-item stage-${status.toLowerCase()}">
-              <button type="button" aria-expanded="false" aria-controls="panel-${name.toLowerCase()}">
-                <span aria-hidden="true">${icon}</span><span>${name}</span><span>${status}</span><span aria-hidden="true">+</span>
-              </button>
-              <div id="panel-${name.toLowerCase()}" hidden><p>Activity for ${name}</p><h2>Evidence activity</h2><ul><li>Evidence item</li></ul></div>
-            </li>`).join("")}
-        </ol>
-      </section>
-    </main>`;
+  return renderToStaticMarkup(createElement(StageTimeline, { stages: states, evidenceByStage: { verify: ["Claim checked against source one"] } }));
 }
 
 test.describe("pipeline states", () => {
   test("exposes all six statuses and expands details by keyboard", async ({ page }) => {
     await page.setContent(fixtureMarkup());
     await expect(page.getByRole("heading", { name: "Generation progress" })).toBeVisible();
-    await expect(page.getByRole("list", { name: "Post generation stages" }).getByRole("listitem")).toHaveCount(6);
-    for (const [name, status] of stages) {
-      await expect(page.getByRole("button", { name: new RegExp(`${name}.*${status}`) })).toBeVisible();
+    const list = page.getByRole("list", { name: "Post generation stages" });
+    await expect(list.getByRole("listitem")).toHaveCount(6);
+    for (let index = 0; index < stageLabels.length; index += 1) {
+      const item = list.getByRole("listitem").nth(index);
+      await expect(item.getByText(stageLabels[index], { exact: true })).toBeVisible();
+      await expect(item.getByText(statusLabels[index], { exact: true })).toBeVisible();
     }
-    const verify = page.getByRole("button", { name: /Verify.*Active/ });
+    const verifyDetails = page.locator("details").nth(1);
+    const verify = verifyDetails.locator("summary");
     await verify.focus();
     await page.keyboard.press("Enter");
-    await expect(verify).toHaveAttribute("aria-expanded", "true");
-    await expect(page.locator("#panel-verify")).toBeVisible();
+    await expect(verifyDetails).toHaveAttribute("open", "");
+    await expect(page.getByText("Claim checked against source one")).toBeVisible();
   });
 
   test("remains readable at a narrow viewport", async ({ page }) => {

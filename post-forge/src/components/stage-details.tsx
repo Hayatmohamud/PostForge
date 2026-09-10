@@ -1,6 +1,5 @@
 "use client";
 
-import { useId, useState } from "react";
 import type { StageName, StageState } from "../lib/contracts/post";
 
 const stageLabels: Record<StageName, string> = {
@@ -53,31 +52,24 @@ export type StageDetailsProps = {
 };
 
 export function StageDetails({ stage, state, evidence = [], initiallyExpanded = false }: StageDetailsProps) {
-  const [expanded, setExpanded] = useState(initiallyExpanded);
-  const panelId = useId();
   const duration = formatStageDuration(state);
   const started = formatTimestamp(state.startedAt);
   const ended = formatTimestamp(state.endedAt);
 
   return (
     <li className={`stage-item stage-${state.status}`}>
-      <button
-        className="stage-summary"
-        type="button"
-        aria-expanded={expanded}
-        aria-controls={panelId}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        <span className="stage-icon" aria-hidden="true">{statusIcons[state.status]}</span>
-        <span className="stage-heading">
-          <span className="stage-name">{stageLabels[stage]}</span>
-          <span className="stage-status">{statusLabels[state.status]}</span>
-        </span>
-        <span className="stage-duration">{duration ?? "—"}</span>
-        <span className="stage-chevron" aria-hidden="true">{expanded ? "−" : "+"}</span>
-      </button>
+      <details open={initiallyExpanded}>
+        <summary className="stage-summary">
+          <span className="stage-icon" aria-hidden="true">{statusIcons[state.status]}</span>
+          <span className="stage-heading">
+            <span className="stage-name">{stageLabels[stage]}</span>
+            <span className="stage-status">{statusLabels[state.status]}</span>
+          </span>
+          <span className="stage-duration">{duration ?? "—"}</span>
+          <span className="stage-chevron" aria-hidden="true">+</span>
+        </summary>
 
-      <div className="stage-panel" id={panelId} hidden={!expanded}>
+      <div className="stage-panel">
         {state.activity ? <p className="stage-activity">{state.activity}</p> : <p className="stage-activity stage-muted">No activity summary yet.</p>}
         <dl className="stage-times">
           {started ? <div><dt>Started</dt><dd><time dateTime={state.startedAt}>{started}</time></dd></div> : null}
@@ -91,6 +83,7 @@ export function StageDetails({ stage, state, evidence = [], initiallyExpanded = 
           </div>
         ) : null}
       </div>
+      </details>
     </li>
   );
 }
