@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { StageTimeline } from "../../src/components/stage-timeline";
 import type { StageName, StageState } from "../../src/lib/contracts/post";
@@ -16,8 +16,18 @@ const states: Readonly<Record<StageName, StageState>> = {
   publish: { status: "queued", attempts: 0 },
 };
 
+function toReactElement(value: unknown): ReactNode {
+  if (Array.isArray(value)) return value.map(toReactElement);
+  if (typeof value !== "object" || value === null) return value as ReactNode;
+  const node = value as { __pw_type?: string; type?: unknown; props?: Record<string, unknown>; key?: string | number | null };
+  if (node.__pw_type !== "jsx" || typeof node.type !== "function" && typeof node.type !== "string") return value as ReactNode;
+  const props = Object.fromEntries(Object.entries(node.props ?? {}).map(([key, child]) => [key, toReactElement(child)]));
+  return createElement(node.type as keyof React.JSX.IntrinsicElements, { ...props, key: node.key });
+}
+
 function fixtureMarkup() {
-  return renderToStaticMarkup(createElement(StageTimeline, { stages: states, evidenceByStage: { verify: ["Claim checked against source one"] } }));
+  const playwrightTree = StageTimeline({ stages: states, evidenceByStage: { verify: ["Claim checked against source one"] } });
+  return renderToStaticMarkup(toReactElement(playwrightTree));
 }
 
 test.describe("pipeline states", () => {
