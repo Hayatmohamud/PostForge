@@ -4,7 +4,7 @@ import { generatedIdSchema } from "../lib/contracts/evidence";
 /** Stable event name shared by submission, workflow, and recovery tasks. */
 export const GENERATION_REQUESTED_EVENT = "post/generate.requested" as const;
 
-const generationRequestedDataSchema = z.object({
+export const generationRequestedDataSchema = z.object({
   postId: generatedIdSchema,
   eventId: generatedIdSchema,
 }).strict();

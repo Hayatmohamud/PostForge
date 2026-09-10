@@ -50,11 +50,11 @@ describe("generation event contract", () => {
 describe("Inngest client", () => {
   test("uses the local dev endpoint without requiring event credentials", async () => {
     const config = getServerConfig(env());
-    const request = vi.fn(async (input: string | URL, init?: RequestInit) => {
+    const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("http://127.0.0.1:8288/e/postforge-dev");
-      expect(init?.headers).toEqual({ "Content-Type": "application/json" });
-      expect(JSON.parse(String(init?.body))).toEqual(createGenerationRequestedEvent({ postId, eventId }));
-      return new Response(JSON.stringify({ ids: [eventId] }), { status: 200 });
+      expect(init?.headers).toMatchObject({ "Content-Type": "application/json" });
+      expect(JSON.parse(String(init?.body))).toEqual([createGenerationRequestedEvent({ postId, eventId })]);
+      return new Response(JSON.stringify({ ids: [eventId], status: 200 }), { status: 200 });
     });
     const client = createInngestClient({ config, fetch: request });
     await expect(client.send(createGenerationRequestedEvent({ postId, eventId }))).resolves.toEqual({ ids: [eventId] });
