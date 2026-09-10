@@ -24,6 +24,7 @@ import {
 import { runNetwork, type NetworkDependencies, type NetworkResult } from "../agents/network";
 import { publishPost, publisherInput, type PublisherResult } from "../agents/publisher";
 import { createInngestClient, type InngestClient } from "./client";
+import { handleInngestFailure } from "./failure-handler";
 import {
   GENERATION_REQUESTED_EVENT,
   generationRequestedEventSchema,
@@ -36,6 +37,7 @@ const workflowResultSchema = z.object({
   status: z.enum(["complete", "failed", "invalid"]),
   postId: z.string(),
   runId: z.string().optional(),
+  retryable: z.boolean().optional(),
   reason: z.enum(["post_not_found", "event_mismatch", "network_failed", "invalid_network_input"]).optional(),
 }).strict();
 
@@ -159,6 +161,30 @@ function createPostCheckpointStore(
       }
       if (parsed.expectedRevision !== undefined && current.revision !== parsed.expectedRevision) return null;
 
+      // Network failures that are still classified as terminal are kept out of
+      // the persisted terminal state so Inngest can replay the current stage.
+      // Invalid input/evidence uses a different safe code and fails promptly.
+      if (parsed.state.status === "failed" && parsed.state.failure?.code === "TERMINAL_FAILURE") {
+        const retryableState = networkStateSchema.parse({
+          ...parsed.state,
+          failure: {
+            ...parsed.state.failure,
+            code: "TRANSIENT_FAILURE",
+            message: "A temporary service problem interrupted this operation.",
+            status: 503,
+            retryable: true,
+          },
+        });
+        return {
+          revision: current.revision,
+          postId: current.post.postId,
+          runId,
+          state: retryableState,
+          reason: parsed.reason,
+          ...(safeActivitySummary(parsed.activity) ? { activity: safeActivitySummary(parsed.activity) } : {}),
+        };
+      }
+
       const saved = await savePost(current.post.postId, current.revision, {
         status: parsed.state.status,
         stages: parsed.state.stages,
@@ -203,7 +229,20 @@ function createNetworkDependencies(
 function summarizeNetworkResult(postId: string, runId: string, result: NetworkResult): DurableWorkflowResult {
   if (result.status === "complete") return workflowResultSchema.parse({ status: "complete", postId, runId });
   if (result.status === "invalid_input") return workflowResultSchema.parse({ status: "invalid", postId, reason: "invalid_network_input" });
-  return workflowResultSchema.parse({ status: "failed", postId, runId, reason: "network_failed" });
+  return workflowResultSchema.parse({
+    status: "failed",
+    postId,
+    runId,
+    reason: "network_failed",
+    ...(result.state.failure?.retryable ? { retryable: true } : {}),
+  });
+}
+
+class RetryableWorkflowError extends Error {
+  constructor() {
+    super("A temporary workflow failure will be retried.");
+    this.name = "RetryableWorkflowError";
+  }
 }
 
 /** Execute the durable workflow body; the endpoint task only needs to register this function. */
@@ -256,7 +295,7 @@ export async function runGenerationWorkflow(
   if (started.action === "failed") return { status: "failed", postId, runId: started.snapshot.post.runId ?? eventId, reason: "network_failed" };
 
   const config = (dependencies.getServerConfig ?? getServerConfig)(env);
-  return context.step.run("run-agent-network", async () => {
+  const outcome = await context.step.run("run-agent-network", async () => {
     const state = networkStateFromPost(started.snapshot, eventId, config);
     const execute = dependencies.runNetwork ?? runNetwork;
     const result = await execute(
@@ -265,6 +304,8 @@ export async function runGenerationWorkflow(
     );
     return summarizeNetworkResult(postId, eventId, result);
   });
+  if (outcome.retryable) throw new RetryableWorkflowError();
+  return outcome;
 }
 
 /** Register the workflow without eagerly reading production credentials at import time. */
@@ -275,7 +316,9 @@ export function createGeneratePostFunction(client: InngestClient = createInngest
       name: "Generate Post",
       retries: 3,
       idempotency: "event.data.eventId",
+      singleton: { key: "event.data.postId", mode: "skip" },
       checkpointing: true,
+      onFailure: async (context) => handleInngestFailure(context),
     },
     { event: GENERATION_REQUESTED_EVENT },
     async ({ event, step, runId }) => runGenerationWorkflow({

@@ -145,7 +145,7 @@ describe("durable generation workflow", () => {
     expect(publishPost).toHaveBeenCalledTimes(1);
   });
 
-  test("persists a sanitized terminal failure and does not retry completed work", async () => {
+  test("keeps a transient failure non-terminal until retry exhaustion", async () => {
     let current = makePost();
     const deps = networkDependencies();
     deps.research.mockRejectedValue(new Error("provider-secret"));
@@ -167,7 +167,9 @@ describe("durable generation workflow", () => {
       env: env(), getPost, updateDispatch, checkpointPost,
       getServerConfig: (value) => getServerConfig(value ?? env()), network: deps,
     })).resolves.toEqual({ status: "failed", postId, runId: eventId, reason: "network_failed" });
-    expect(current.post.status).toBe("failed");
+    // TASK-029 keeps retryable workflow failures out of the persisted terminal
+    // state so the durable runner can replay the current stage.
+    expect(current.post.status).toBe("researching");
     expect(JSON.stringify(current)).not.toContain("provider-secret");
     expect(deps.research).toHaveBeenCalledTimes(1);
   });
