@@ -1,6 +1,16 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  clearPendingSubmission,
+  createSubmissionKey,
+  GenerationApiError,
+  readPendingSubmission,
+  submitGeneration,
+  writePendingSubmission,
+  type PendingSubmission,
+} from "../lib/client/api";
 import { Button } from "./ui/button";
 import { Status } from "./ui/status";
 
@@ -19,12 +29,27 @@ const examples = [
 ];
 
 export function TopicForm({ onSubmit }: TopicFormProps) {
+  const router = useRouter();
   const [topic, setTopic] = useState("");
   const [state, setState] = useState<FormState>("idle");
   const [error, setError] = useState<string | null>(null);
+  const pendingSubmission = useRef<PendingSubmission | null>(null);
+  const requestInFlight = useRef(false);
+
+  /* eslint-disable react-hooks/set-state-in-effect -- rehydrate browser-only retry state after SSR */
+  useEffect(() => {
+    const pending = readPendingSubmission();
+    if (!pending) return;
+    pendingSubmission.current = pending;
+    setTopic(pending.topic);
+    setState("error");
+    setError("Your previous post is ready to retry.");
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (requestInFlight.current) return;
     const trimmed = topic.trim();
 
     if (!trimmed) {
@@ -38,14 +63,34 @@ export function TopicForm({ onSubmit }: TopicFormProps) {
       return;
     }
 
+    const submission = pendingSubmission.current?.topic === trimmed
+      ? pendingSubmission.current
+      : { topic: trimmed, submissionKey: createSubmissionKey() };
+    pendingSubmission.current = submission;
+    writePendingSubmission(submission);
+    requestInFlight.current = true;
     setState("pending");
     setError(null);
     try {
-      await onSubmit?.(trimmed);
+      if (onSubmit) {
+        await onSubmit(trimmed);
+        clearPendingSubmission();
+        pendingSubmission.current = null;
+        setState("success");
+        return;
+      }
+      const result = await submitGeneration(submission);
+      clearPendingSubmission();
+      pendingSubmission.current = null;
       setState("success");
-    } catch {
+      router.push(`/posts/${result.postId}`);
+    } catch (caughtError) {
       setState("error");
-      setError("We could not start this post. Your topic is still here to retry.");
+      setError(caughtError instanceof GenerationApiError
+        ? caughtError.message
+        : "We could not start this post. Your topic is still here to retry.");
+    } finally {
+      requestInFlight.current = false;
     }
   }
 
@@ -68,7 +113,12 @@ export function TopicForm({ onSubmit }: TopicFormProps) {
           name="topic"
           value={topic}
           onChange={(event) => {
-            setTopic(event.target.value);
+            const nextTopic = event.target.value;
+            setTopic(nextTopic);
+            if (pendingSubmission.current && pendingSubmission.current.topic !== nextTopic.trim()) {
+              pendingSubmission.current = null;
+              clearPendingSubmission();
+            }
             if (state !== "pending") {
               setState("idle");
               setError(null);
