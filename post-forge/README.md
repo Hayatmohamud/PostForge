@@ -56,7 +56,15 @@ Required values are `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `SERPER_API_KEY`, 
 
 The development example selects `OPENROUTER_MODEL=z-ai/glm-5.3-flash`, `IMAGE_PROVIDER=gemini`, and `IMAGE_MODEL=gemini-2.5-flash-image` from the merged compatibility report. Only the Gemini image provider is accepted. A different compatible text/image model can be configured explicitly; there is no implicit model fallback. Future run creation must snapshot the selected models/provider, and resumed runs must use that snapshot.
 
-For local Inngest Dev Server use, explicitly set `INNGEST_DEV=true` (or `1`); event/signing keys may then be omitted. With `INNGEST_DEV` omitted, `false`, or `0`, both `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` are required, even under `NODE_ENV=development`. Other values, including blank values and custom URLs, are rejected by this initial configuration contract. Cloud environments must use cloud mode and their own keys. This follows Inngest's [explicit development mode](https://www.inngest.com/docs/sdk/environment-variables) and [local signing-key exception](https://www.inngest.com/docs/platform/signing-keys); no Inngest client or endpoint is added by this task.
+For local Inngest Dev Server use, explicitly set `INNGEST_DEV=true` (or `1`); event/signing keys may then be omitted. With `INNGEST_DEV` omitted, `false`, or `0`, both `INNGEST_EVENT_KEY` and `INNGEST_SIGNING_KEY` are required, even under `NODE_ENV=development`. Other values, including blank values and custom URLs, are rejected by this initial configuration contract. Cloud environments must use cloud mode and their own keys. This follows Inngest's [explicit development mode](https://www.inngest.com/docs/sdk/environment-variables) and [local signing-key exception](https://www.inngest.com/docs/platform/signing-keys).
+
+TASK-030 serves the durable generation function at `/api/inngest` through the Next.js App Router. It reuses the TASK-027 client/events and the TASK-028/TASK-029 workflow registration, including its bounded retries and failure reconciliation. Inngest exposes one SDK-managed failure companion for the function's `onFailure` hook; no duplicate workflow handler is manually registered. Start the app with `npm run dev`, then run the local runner in another shell:
+
+```sh
+npx inngest-cli@latest dev -u http://localhost:3000/api/inngest
+```
+
+Production deployments must expose the same route over HTTPS and provide the required Inngest event and signing keys. No cron function is registered.
 
 The configuration module imports the [Next.js `server-only` marker](https://nextjs.org/docs/app/getting-started/server-and-client-components#preventing-environment-poisoning), which Next resolves internally without another package. Client Component imports fail at build time. Never return the configuration object in an API response, pass it to Client Components, log it, or rename its secrets with a `NEXT_PUBLIC_` prefix. Unit tests mock only this framework marker and use fake credentials. Public error mapping is owned by the subsequent error-handling task.
 
