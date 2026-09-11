@@ -241,7 +241,7 @@ export function usePost(
     return createPostPoller(postId, setSnapshot, { initialDelayMs, maxDelayMs, backoffFactor, fetcher }).stop;
   }, [postId, initialDelayMs, maxDelayMs, backoffFactor, fetcher]);
 
-  return snapshot.post?.postId === postId || (!postId && snapshot.phase === "idle")
+  return snapshot.post?.postId === postId || (snapshot.phase === "fetch-error" && snapshot.post === null) || (!postId && snapshot.phase === "idle")
     ? snapshot
     : snapshotForPostId(postId);
 }
