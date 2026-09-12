@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { PostStatus } from "../lib/contracts/post";
 import { usePost } from "../hooks/use-post";
 import { StageTimeline } from "./stage-timeline";
+import { PostDetail } from "./post-detail";
 
 const statusCopy: Readonly<Record<PostStatus, string>> = {
   queued: "Your run is queued.",
@@ -67,6 +68,8 @@ export function RunView({ postId }: { postId: string }) {
     return <UnavailableState notFound={snapshot.fetchError?.status === 404} retryable={snapshot.fetchError?.retryable === true} />;
   }
 
+  if (post.status === "done") return <PostDetail post={post} />;
+
   const isGenerationFailure = post.status === "failed";
   const showingPersistedProgress = snapshot.phase === "fetch-error";
 
@@ -98,10 +101,6 @@ export function RunView({ postId }: { postId: string }) {
             <p>{post.error?.retryable ? "The workflow may retry this step automatically." : "Start a new post to try again."}</p>
             <Link className="button button-secondary" href="/">New post</Link>
           </div>
-        ) : post.status === "done" ? (
-          <div className="run-completion" data-testid="run-completion-slot">
-            <p>The generation run is complete. Your finished post will appear here.</p>
-          </div>
         ) : null}
       </div>
 
@@ -116,11 +115,10 @@ export function RunView({ postId }: { postId: string }) {
         .run-status-card { display: grid; gap: 1.25rem; margin-bottom: 2.25rem; padding: clamp(1.25rem, 4vw, 2rem); }
         .run-status-label { margin: 0 0 0.35rem; color: var(--color-brand); font-size: 0.8rem; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase; }
         .run-status-message { margin: 0; font-size: 1.25rem; font-weight: 700; }
-        .run-failure, .run-completion { display: grid; gap: 0.65rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
+        .run-failure { display: grid; gap: 0.65rem; padding-top: 1rem; border-top: 1px solid var(--color-border); }
         .run-failure { color: var(--color-error); }
-        .run-failure p, .run-completion p { margin: 0; }
+        .run-failure p { margin: 0; }
         .run-failure .button { width: fit-content; color: var(--color-text); }
-        .run-completion { color: var(--color-success); }
         @media (max-width: 680px) {
           .run-heading { display: block; }
           .run-intro { margin-top: 1rem; }
