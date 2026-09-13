@@ -23,7 +23,6 @@ jobs:
     env:
       CI: "true"
       NEXT_TELEMETRY_DISABLED: "1"
-      POSTFORGE_TEST_MODE: fixture
     steps:
       - uses: actions/checkout@v7
         with:
@@ -45,7 +44,41 @@ jobs:
       - run: npm run build
       - run: npx --no-install playwright install --with-deps chromium
       - run: npm run test:browser
-      - run: npm run test:e2e
+      - name: Start provider fixture server
+        working-directory: post-forge
+        env:
+          POSTFORGE_PROVIDER_FIXTURES: "1"
+          POSTFORGE_PROVIDER_FIXTURE_SERVER: "1"
+          POSTFORGE_PROVIDER_FIXTURE_PORT: "8787"
+        run: |
+          node --import=./tests/fixtures/providers.ts -e 'setInterval(() => {}, 2147483647)' > /tmp/postforge-provider-fixture.log 2>&1 &
+          echo $! > /tmp/postforge-provider-fixture.pid
+      - name: Start Inngest development runner
+        working-directory: post-forge
+        env:
+          NPM_CONFIG_ALLOW_SCRIPTS: inngest-cli
+        run: |
+          npx --yes inngest-cli@latest dev -u http://127.0.0.1:3103/api/inngest > /tmp/postforge-inngest.log 2>&1 &
+          echo $! > /tmp/postforge-inngest.pid
+      - name: Run real generation E2E
+        env:
+          MONGODB_URI: ${{ secrets.TEST_MONGODB_URI }}
+          TEST_MONGODB_URI: ${{ secrets.TEST_MONGODB_URI }}
+          MONGODB_DB: postforge_test_044_ci
+          TEST_MONGODB_DB: postforge_test_044_ci
+          POSTFORGE_PROVIDER_FIXTURES: "1"
+          POSTFORGE_PROVIDER_FIXTURE_SERVER: "0"
+          POSTFORGE_PROVIDER_FIXTURE_PORT: "8787"
+          OPENROUTER_BASE_URL: http://127.0.0.1:8787/v1
+          OPENROUTER_API_KEY: task044-ci-fixture-key
+          OPENROUTER_MODEL: z-ai/glm-5.3-flash
+          SERPER_API_KEY: task044-ci-fixture-key
+          GEMINI_API_KEY: task044-ci-fixture-key
+          IMAGE_PROVIDER: gemini
+          IMAGE_MODEL: gemini-2.5-flash-image
+          INNGEST_DEV: "true"
+          NODE_OPTIONS: --import=./tests/fixtures/providers.ts
+        run: npm run test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
