@@ -8,7 +8,7 @@ import {
 } from "../lib/posts";
 import { AppError, toPublicError, type PublicError } from "../lib/errors";
 import { currentStage, failStage, type StageName } from "../lib/stages";
-import { generationRequestedEventSchema } from "./events";
+import { generationRequestedDataSchema } from "./events";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -46,6 +46,8 @@ const failureContextSchema = z.object({
   event: z.unknown(),
   error: z.unknown(),
 }).passthrough();
+
+const failureEventSchema = z.object({ data: generationRequestedDataSchema }).passthrough();
 
 function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -128,7 +130,7 @@ export async function handleInngestFailure(
 ): Promise<WorkflowFailureResult> {
   const parsed = failureContextSchema.safeParse(value);
   if (!parsed.success) return { status: "ignored" };
-  const event = generationRequestedEventSchema.safeParse(parsed.data.event);
+  const event = failureEventSchema.safeParse(parsed.data.event);
   if (!event.success) return { status: "ignored" };
   return reconcileWorkflowFailure({
     postId: event.data.data.postId,

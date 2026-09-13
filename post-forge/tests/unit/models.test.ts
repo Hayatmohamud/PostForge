@@ -33,6 +33,13 @@ describe("OpenRouter model factory", () => {
     expect(model.options).toMatchObject({ model: "another/provider-model", apiKey: "openrouter-secret" });
   });
 
+  test("limits the fixture endpoint override to loopback in explicit fixture mode", () => {
+    const fixture = createTextModel(undefined, { env: env({ POSTFORGE_PROVIDER_FIXTURES: "1", OPENROUTER_BASE_URL: "http://127.0.0.1:8787/v1" }) });
+    expect(fixture.options).toMatchObject({ baseUrl: "http://127.0.0.1:8787/v1" });
+    expect(() => createTextModel(undefined, { env: env({ POSTFORGE_PROVIDER_FIXTURES: "1", OPENROUTER_BASE_URL: "https://attacker.example/v1" }) })).toThrow();
+    expect(createTextModel(undefined, { env: env({ OPENROUTER_BASE_URL: "https://attacker.example/v1" }) }).options).toMatchObject({ baseUrl: OPENROUTER_BASE_URL });
+  });
+
   test.each([
     { provider: "other", model: "valid/model" },
     { provider: "openrouter", model: "not a valid model" },

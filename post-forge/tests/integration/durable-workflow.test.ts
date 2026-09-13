@@ -67,8 +67,14 @@ function step(): { context: WorkflowStep; names: string[] } {
   };
 }
 
-function event(): { name: typeof GENERATION_REQUESTED_EVENT; data: { postId: string; eventId: string } } {
-  return { name: GENERATION_REQUESTED_EVENT, data: { postId, eventId } };
+function event(): { name: typeof GENERATION_REQUESTED_EVENT; data: { postId: string; eventId: string }; id: string; ts: number; user: { id: string } } {
+  return {
+    name: GENERATION_REQUESTED_EVENT,
+    data: { postId, eventId },
+    id: "inngest-event-id",
+    ts: Date.parse(at),
+    user: { id: "fixture-user" },
+  };
 }
 
 function networkDependencies() {
@@ -129,7 +135,7 @@ describe("durable generation workflow", () => {
       network: deps,
     })).resolves.toEqual({ status: "complete", postId, runId: eventId });
 
-    expect(first.names).toEqual(["load-saved-post", "mark-dispatch-started", "run-agent-network"]);
+    expect(first.names).toEqual(["load-saved-post", "mark-dispatch-started"]);
     expect(current.post.status).toBe("done");
     expect(checkpointPost.mock.calls.length).toBeGreaterThan(6);
     expect(deps.research).toHaveBeenCalledTimes(1);

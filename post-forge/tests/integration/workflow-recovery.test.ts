@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { createGeneratePostFunction, runGenerationWorkflow, type WorkflowStep } from "../../src/inngest/generate-post";
-import { reconcileWorkflowFailure } from "../../src/inngest/failure-handler";
+import { handleInngestFailure, reconcileWorkflowFailure } from "../../src/inngest/failure-handler";
 import { GENERATION_REQUESTED_EVENT } from "../../src/inngest/events";
 import { AppError, toPublicError } from "../../src/lib/errors";
 import { postSchema, type Post } from "../../src/lib/contracts/post";
@@ -76,6 +76,33 @@ describe("workflow retry and recovery", () => {
     expect(current.post.status).toBe("failed");
     expect(current.post.stages.research.status).toBe("failed");
     expect(current.post.error?.code).toBe("TERMINAL_FAILURE");
+  });
+
+  test("reconciles a real Inngest failure envelope with metadata", async () => {
+    const stages = transitionStage(createInitialStages(), "research", "active", at);
+    let current = makePost({ status: "researching", stages });
+    const getPost = vi.fn(async () => current);
+    const checkpointPost = vi.fn(async (_id: string, _revision: number, checkpoint: { status: Post["status"]; stages: Post["stages"]; outputs: Post["outputs"]; error?: unknown }) => {
+      current = { revision: current.revision + 1, post: postSchema.parse({ ...current.post, ...checkpoint, updatedAt: at }) };
+      return current;
+    });
+
+    await expect(handleInngestFailure({
+      event: {
+        name: GENERATION_REQUESTED_EVENT,
+        data: { postId, eventId },
+        id: "inngest-failure-event",
+        ts: Date.parse(at),
+        user: { id: "fixture-user" },
+      },
+      error: { status: 503 },
+    }, { getPost, checkpointPost, sleep: vi.fn(async () => undefined) })).resolves.toMatchObject({
+      status: "reconciled",
+      postId,
+      stage: "research",
+    });
+    expect(current.post.status).toBe("failed");
+    expect(current.post.stages.research.status).toBe("failed");
   });
 
   test("does not overwrite a completed post after a late failure", async () => {

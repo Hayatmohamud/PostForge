@@ -62,6 +62,7 @@ export async function getMongoDatabase(env: Environment = process.env): Promise<
     let client: MongoClient;
     try {
       client = new MongoClient(uri, {
+        ignoreUndefined: true,
         connectTimeoutMS: timeoutMs,
         serverSelectionTimeoutMS: timeoutMs,
         waitQueueTimeoutMS: timeoutMs,
