@@ -142,6 +142,7 @@ describe("MongoDB helper with an isolated client fixture", () => {
     vi.stubEnv("MONGODB_LOG_CONNECTION", "debug");
     await getMongoDatabase({ ...testEnv(), DATABASE_TIMEOUT_MS: "2500" });
     expect(driver.construct).toHaveBeenCalledWith("mongodb://127.0.0.1:27019", {
+      ignoreUndefined: true,
       connectTimeoutMS: 2500, serverSelectionTimeoutMS: 2500, waitQueueTimeoutMS: 2500,
       timeoutMS: 2500, mongodbLogComponentSeverities: {
         default: "off", command: "off", topology: "off",

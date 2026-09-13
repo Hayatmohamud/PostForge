@@ -27,7 +27,7 @@ import { createInngestClient, type InngestClient } from "./client";
 import { handleInngestFailure } from "./failure-handler";
 import {
   GENERATION_REQUESTED_EVENT,
-  generationRequestedEventSchema,
+  generationRequestedDataSchema,
   type GenerationRequestedEvent,
 } from "./events";
 
@@ -250,9 +250,9 @@ export async function runGenerationWorkflow(
   context: GenerationWorkflowContext,
   dependencies: DurableWorkflowDependencies = {},
 ): Promise<DurableWorkflowResult> {
-  const event = generationRequestedEventSchema.parse(context.event);
-  const postId = event.data.postId;
-  const eventId = event.data.eventId;
+  const eventData = generationRequestedDataSchema.parse(context.event.data);
+  const postId = eventData.postId;
+  const eventId = eventData.eventId;
   const loadPost = dependencies.getPost ?? getPost;
   const markDispatch = dependencies.updateDispatch ?? updateDispatch;
   const env = dependencies.env;
@@ -295,15 +295,16 @@ export async function runGenerationWorkflow(
   if (started.action === "failed") return { status: "failed", postId, runId: started.snapshot.post.runId ?? eventId, reason: "network_failed" };
 
   const config = (dependencies.getServerConfig ?? getServerConfig)(env);
-  const outcome = await context.step.run("run-agent-network", async () => {
-    const state = networkStateFromPost(started.snapshot, eventId, config);
-    const execute = dependencies.runNetwork ?? runNetwork;
-    const result = await execute(
-      { state, revision: started.snapshot.revision },
-      createNetworkDependencies(dependencies, config, eventId),
-    );
-    return summarizeNetworkResult(postId, eventId, result);
-  });
+  // AgentKit owns the durable steps used by the network and must run directly
+  // in the Inngest function. Wrapping it in another step nests AgentKit's
+  // steps and leaves the workflow suspended in the first agent.
+  const state = networkStateFromPost(started.snapshot, eventId, config);
+  const execute = dependencies.runNetwork ?? runNetwork;
+  const result = await execute(
+    { state, revision: started.snapshot.revision },
+    createNetworkDependencies(dependencies, config, eventId),
+  );
+  const outcome = summarizeNetworkResult(postId, eventId, result);
   if (outcome.retryable) throw new RetryableWorkflowError();
   return outcome;
 }
@@ -322,7 +323,7 @@ export function createGeneratePostFunction(client: InngestClient = createInngest
     },
     { event: GENERATION_REQUESTED_EVENT },
     async ({ event, step, runId }) => runGenerationWorkflow({
-      event: generationRequestedEventSchema.parse(event),
+      event: { name: GENERATION_REQUESTED_EVENT, data: generationRequestedDataSchema.parse(event.data) },
       step: step as unknown as WorkflowStep,
       runId,
     }),

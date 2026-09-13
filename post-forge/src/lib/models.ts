@@ -13,6 +13,21 @@ type Environment = Readonly<Record<string, string | undefined>>;
 export type SavedModelSelection = ModelSnapshot & { provider: typeof OPENROUTER_PROVIDER };
 export type TextModel = ReturnType<typeof openai>;
 
+function modelBaseUrl(env: Environment): string {
+  if (env.POSTFORGE_PROVIDER_FIXTURES !== "1") return OPENROUTER_BASE_URL;
+  const configured = env.OPENROUTER_BASE_URL?.trim();
+  if (!configured) return OPENROUTER_BASE_URL;
+  try {
+    const url = new URL(configured);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || url.username || url.password) {
+      throw new Error("Unsupported fixture endpoint");
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    throw new AppError("CONFIGURATION_ERROR");
+  }
+}
+
 function selectModel(selection: SavedModelSelection | undefined, config: ServerConfig): string {
   if (!selection) return config.openrouter.model;
   const parsed = modelSnapshotSchema.safeParse(selection);
@@ -22,11 +37,12 @@ function selectModel(selection: SavedModelSelection | undefined, config: ServerC
 
 /** Create the one provider-neutral text model used by agents and resumed runs. */
 export function createTextModel(selection?: SavedModelSelection, options: { config?: ServerConfig; env?: Environment } = {}): TextModel {
-  const config = options.config ?? getServerConfig(options.env);
+  const env = options.env ?? process.env;
+  const config = options.config ?? getServerConfig(env);
   return openai({
     model: selectModel(selection, config),
     apiKey: config.openrouter.apiKey,
-    baseUrl: OPENROUTER_BASE_URL,
+    baseUrl: modelBaseUrl(env),
   });
 }
 
